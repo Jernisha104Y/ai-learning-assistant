@@ -1,4 +1,5 @@
 import os
+import json
 
 from dotenv import load_dotenv
 
@@ -11,7 +12,10 @@ from langchain_google_genai import (
 from langchain_community.vectorstores import FAISS
 
 
-# Load environment variables
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES
+# =========================================================
+
 load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -56,24 +60,24 @@ def create_vector_store(url):
 
 def ask_question(vector_store, question):
 
-    # 5. Retrieve relevant chunks
+    # Retrieve relevant chunks
     retrieved_docs = vector_store.similarity_search(
         question,
         k=4
     )
 
-    # 6. Combine retrieved chunks
+    # Combine retrieved content
     context = "\n\n".join(
         doc.page_content
         for doc in retrieved_docs
     )
 
-    # 7. Create Gemini LLM
+    # Create Gemini LLM
     llm = ChatGoogleGenerativeAI(
         model="gemini-3.6-flash"
     )
 
-    # 8. Create prompt
+    # Create prompt
     prompt = f"""
 You are an AI technical learning assistant.
 
@@ -93,10 +97,10 @@ USER QUESTION:
 Give a clear and beginner-friendly answer.
 """
 
-    # 9. Ask Gemini
+    # Ask Gemini
     response = llm.invoke(prompt)
 
-    # 10. Extract answer
+    # Extract text
     if isinstance(response.content, str):
 
         answer = response.content
@@ -111,3 +115,104 @@ Give a clear and beginner-friendly answer.
         )
 
     return answer
+
+
+# =========================================================
+# GENERATE QUIZ
+# =========================================================
+
+def generate_quiz(vector_store, number_of_questions=5):
+
+    # Retrieve article content
+    retrieved_docs = vector_store.similarity_search(
+        "main concepts, important definitions, key points and important facts from the article",
+        k=8
+    )
+
+    # Combine retrieved content
+    context = "\n\n".join(
+        doc.page_content
+        for doc in retrieved_docs
+    )
+
+    # Create Gemini LLM
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.6-flash"
+    )
+
+    # Prompt Gemini
+    prompt = f"""
+You are an AI technical learning assistant.
+
+Create exactly {number_of_questions} multiple-choice
+questions based ONLY on the provided article context.
+
+Each question must have:
+- question
+- four options
+- correct_answer
+- explanation
+
+The correct_answer must be the exact option text.
+
+Return ONLY valid JSON.
+
+Use this exact format:
+
+[
+    {{
+        "question": "Question text",
+        "options": [
+            "Option A",
+            "Option B",
+            "Option C",
+            "Option D"
+        ],
+        "correct_answer": "Option B",
+        "explanation": "Explanation of why this answer is correct."
+    }}
+]
+
+Do not include markdown.
+Do not include ```json.
+Do not add any text outside the JSON.
+
+ARTICLE CONTEXT:
+{context}
+"""
+
+    # Ask Gemini
+    response = llm.invoke(prompt)
+
+    # Extract response text
+    if isinstance(response.content, str):
+
+        quiz_text = response.content
+
+    else:
+
+        quiz_text = "\n".join(
+            block.get("text", "")
+            for block in response.content
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+        )
+
+    # Remove accidental markdown formatting
+    quiz_text = quiz_text.strip()
+
+    if quiz_text.startswith("```json"):
+        quiz_text = quiz_text[7:]
+
+    if quiz_text.startswith("```"):
+        quiz_text = quiz_text[3:]
+
+    if quiz_text.endswith("```"):
+        quiz_text = quiz_text[:-3]
+
+    quiz_text = quiz_text.strip()
+
+    # Convert JSON text into Python object
+    quiz = json.loads(quiz_text)
+
+    return quiz
